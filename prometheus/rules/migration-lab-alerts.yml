@@ -1,0 +1,100 @@
+groups:
+  - name: migration-lab-critical
+    rules:
+      - alert: MonolithDown
+        expr: up{job="monolith-backend"} == 0
+        for: 30s
+        labels: { severity: critical, pipeline_stage: monolith }
+        annotations:
+          summary: "Monolith API is down"
+          description: "Prometheus has not been able to scrape monolith-backend for 30s."
+
+      - alert: LegacyPostgresDown
+        expr: up{job="postgres-legacy"} == 0
+        for: 30s
+        labels: { severity: critical, pipeline_stage: postgres }
+        annotations:
+          summary: "Legacy PostgreSQL (monolith's DB) is unreachable"
+          description: "postgres-exporter-legacy cannot reach legacy-postgres. Both the monolith API and the whole CDC pipeline depend on this database."
+
+      - alert: KafkaDown
+        expr: up{job="kafka"} == 0
+        for: 30s
+        labels: { severity: critical, pipeline_stage: kafka }
+        annotations:
+          summary: "Kafka broker is unreachable"
+          description: "kafka-exporter cannot reach the cdc-kafka broker. No CDC events can flow while this is down."
+
+      - alert: KafkaConnectDown
+        expr: kafka_connect_up == 0 or absent(kafka_connect_up)
+        for: 30s
+        labels: { severity: critical, pipeline_stage: debezium }
+        annotations:
+          summary: "Kafka Connect REST API is unreachable"
+          description: "connect-status-exporter cannot reach the cdc-connect REST API on :8083."
+
+      - alert: DebeziumConnectorFailed
+        expr: kafka_connect_connector_failed{connector="legacy-cdc-connector"} == 1
+        for: 0m
+        labels: { severity: critical, pipeline_stage: debezium }
+        annotations:
+          summary: "legacy-cdc-connector is in FAILED state"
+          description: "The Debezium connector legacy-cdc-connector has failed. CDC capture from the legacy database has stopped. Check `docker logs cdc-connect` and consider scripts/connector-restart.sh."
+
+      - alert: ReplicationSlotInactive
+        expr: pg_replication_slot_active{slot_name="legacy_cdc_slot"} == 0
+        for: 1m
+        labels: { severity: critical, pipeline_stage: postgres }
+        annotations:
+          summary: "Replication slot legacy_cdc_slot is inactive"
+          description: "No consumer (Debezium) is attached to legacy_cdc_slot. WAL will keep accumulating on the legacy Postgres until this is resolved - risk of disk exhaustion."
+
+      - alert: CDCConsumerDown
+        expr: up{job=~"user-service-cdc|sales-service-cdc"} == 0
+        for: 30s
+        labels: { severity: critical, pipeline_stage: consumer }
+        annotations:
+          summary: "{{ $labels.job }} consumer is down"
+          description: "Prometheus cannot scrape the {{ $labels.job }} metrics endpoint. The consumer process may have crashed. (Covers both UserCDCConsumerDown and SalesCDCConsumerDown - one rule, fires per consumer.)"
+
+      - alert: DestinationDatabaseDown
+        expr: up{job=~"postgres-user|postgres-sales"} == 0
+        for: 30s
+        labels: { severity: critical, pipeline_stage: destination-db }
+        annotations:
+          summary: "{{ $labels.job }} PostgreSQL is unreachable"
+          description: "postgres-exporter cannot reach {{ $labels.job }}. CDC events cannot be applied while this is down. (Covers both UserDatabaseDown and SalesDatabaseDown.)"
+
+  - name: migration-lab-warning
+    rules:
+      - alert: HighWalLag
+        expr: pg_replication_slot_confirmed_flush_lag_bytes{slot_name="legacy_cdc_slot"} > 50000000
+        for: 2m
+        labels: { severity: warning, pipeline_stage: postgres }
+        annotations:
+          summary: "WAL lag on legacy_cdc_slot is above 50MB"
+          description: "Debezium is falling behind the legacy Postgres WAL (current lag: {{ $value | humanize1024 }}B). Check whether cdc-connect is healthy and consuming."
+
+      - alert: HighConsumerLag
+        expr: sum(kafka_consumergroup_lag{consumergroup=~"user-service-cdc|sales-service-cdc"}) by (consumergroup, topic) > 1000
+        for: 2m
+        labels: { severity: warning, pipeline_stage: consumer }
+        annotations:
+          summary: "{{ $labels.consumergroup }} consumer lag is above 1000 messages"
+          description: "Topic {{ $labels.topic }} has {{ $value }} messages of lag for consumer group {{ $labels.consumergroup }}. (Covers both UserHighConsumerLag and SalesHighConsumerLag.)"
+
+      - alert: CDCProcessingErrors
+        expr: sum(increase(cdc_events_failed_total{service=~"user-service-cdc|sales-service-cdc"}[5m])) by (service) > 0
+        for: 0m
+        labels: { severity: warning, pipeline_stage: consumer }
+        annotations:
+          summary: "{{ $labels.service }} has failed events"
+          description: "{{ $value }} event(s) failed processing in the last 5 minutes for {{ $labels.service }}. Check consumer logs for the operation/topic/offset. (Covers both UserCDCProcessingErrors and SalesCDCProcessingErrors.)"
+
+      - alert: HighCDCEndToEndLatency
+        expr: histogram_quantile(0.95, sum(rate(cdc_end_to_end_latency_seconds_bucket{service=~"user-service-cdc|sales-service-cdc"}[5m])) by (le, service)) > 5
+        for: 2m
+        labels: { severity: warning, pipeline_stage: consumer }
+        annotations:
+          summary: "p95 CDC end-to-end latency for {{ $labels.service }} is above 5s"
+          description: "From Debezium source timestamp to destination DB commit, p95 latency is {{ $value }}s. (Covers both UserHighCDCEndToEndLatency and SalesHighCDCEndToEndLatency.)"

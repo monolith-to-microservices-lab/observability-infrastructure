@@ -1,0 +1,62 @@
+# MBean -> Prometheus metric mapping for Kafka Connect + the Debezium
+# PostgreSQL connector, scraped remotely (no javaagent inside the `connect`
+# container - it only needs JMXPORT/JMXHOST enabled, see cdc-infrastructure's
+# docker-compose.yml). Best-effort: if this whole sidecar cannot reach JMX,
+# every other dashboard/metric in this stack is unaffected.
+---
+startDelaySeconds: 0
+hostPort: connect:9012
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+whitelistObjectNames:
+  - "kafka.connect:type=connector-metrics,connector=*"
+  - "kafka.connect:type=connector-task-metrics,connector=*,task=*"
+  - "kafka.connect:type=source-task-metrics,connector=*,task=*"
+  - "kafka.connect:type=task-error-metrics,connector=*,task=*"
+  - "debezium.postgres:type=connector-metrics,context=streaming,server=*"
+  - "debezium.postgres:type=connector-metrics,context=snapshot,server=*"
+
+rules:
+  - pattern: 'kafka.connect<type=connector-metrics, connector=(.+)><>connector-class'
+    name: kafka_connect_connector_class
+    labels: { connector: "$1" }
+
+  - pattern: 'kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>source-record-poll-total'
+    name: kafka_connect_source_record_poll_total
+    labels: { connector: "$1", task: "$2" }
+
+  - pattern: 'kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>source-record-write-total'
+    name: kafka_connect_source_record_write_total
+    labels: { connector: "$1", task: "$2" }
+
+  - pattern: 'kafka.connect<type=source-task-metrics, connector=(.+), task=(.+)><>poll-batch-avg-time-ms'
+    name: kafka_connect_poll_batch_avg_time_ms
+    labels: { connector: "$1", task: "$2" }
+
+  - pattern: 'kafka.connect<type=task-error-metrics, connector=(.+), task=(.+)><>total-errors-logged'
+    name: kafka_connect_task_errors_total
+    labels: { connector: "$1", task: "$2" }
+
+  - pattern: 'kafka.connect<type=task-error-metrics, connector=(.+), task=(.+)><>total-retries'
+    name: kafka_connect_task_retries_total
+    labels: { connector: "$1", task: "$2" }
+
+  - pattern: 'debezium.postgres<type=connector-metrics, context=(.+), server=(.+)><>MilliSecondsBehindSource'
+    name: debezium_milliseconds_behind_source
+    labels: { context: "$1", server: "$2" }
+
+  - pattern: 'debezium.postgres<type=connector-metrics, context=(.+), server=(.+)><>TotalNumberOfEventsSeen'
+    name: debezium_events_seen_total
+    labels: { context: "$1", server: "$2" }
+
+  - pattern: 'debezium.postgres<type=connector-metrics, context=(.+), server=(.+)><>NumberOfCreateEventsSeen'
+    name: debezium_create_events_seen_total
+    labels: { context: "$1", server: "$2" }
+
+  - pattern: 'debezium.postgres<type=connector-metrics, context=(.+), server=(.+)><>NumberOfUpdateEventsSeen'
+    name: debezium_update_events_seen_total
+    labels: { context: "$1", server: "$2" }
+
+  - pattern: 'debezium.postgres<type=connector-metrics, context=(.+), server=(.+)><>NumberOfDeleteEventsSeen'
+    name: debezium_delete_events_seen_total
+    labels: { context: "$1", server: "$2" }

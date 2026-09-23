@@ -1,0 +1,37 @@
+# Custom queries for the legacy Postgres (monolith), on top of postgres_exporter's
+# built-in collectors. These are what let us answer "is legacy_cdc_slot alive and
+# caught up with the WAL?" directly in Grafana/Prometheus.
+pg_replication_slot:
+  query: |
+    SELECT
+      slot_name,
+      active::int AS active,
+      pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS restart_lag_bytes,
+      pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) AS confirmed_flush_lag_bytes
+    FROM pg_replication_slots;
+  metrics:
+    - slot_name:
+        usage: "LABEL"
+        description: "Replication slot name"
+    - active:
+        usage: "GAUGE"
+        description: "1 if the replication slot is currently active (a consumer/Debezium is attached)"
+    - restart_lag_bytes:
+        usage: "GAUGE"
+        description: "Bytes of WAL between the current position and the slot's restart_lsn"
+    - confirmed_flush_lag_bytes:
+        usage: "GAUGE"
+        description: "Bytes of WAL between the current position and the slot's confirmed_flush_lsn"
+
+pg_publication_table_count:
+  query: |
+    SELECT pubname, count(*) AS table_count
+    FROM pg_publication_tables
+    GROUP BY pubname;
+  metrics:
+    - pubname:
+        usage: "LABEL"
+        description: "Publication name"
+    - table_count:
+        usage: "GAUGE"
+        description: "Number of tables included in the publication"

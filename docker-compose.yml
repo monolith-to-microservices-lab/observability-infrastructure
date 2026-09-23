@@ -1,0 +1,198 @@
+# ---------------------------------------------------------------------------
+# observability-infrastructure
+#
+# Metrics + Logs + Traces for the Strangler Fig lab:
+#   monolito-microservice, user-service, sales-service, cdc-infrastructure
+#
+# This repo does not own any business data. It only reads/scrapes the other
+# containers over the shared, externally-managed network `migration-network`
+# (created once by `docker network create migration-network`, already used
+# by the other four repos).
+#
+# IMPORTANT: never run `docker compose down -v` here casually either -
+# prometheus_data/grafana_data/loki_data/tempo_data hold your dashboards'
+# history. `docker compose down` (no -v) is always safe.
+# ---------------------------------------------------------------------------
+name: observability-infrastructure
+
+networks:
+  # Every service below joins this single shared network by default - no
+  # per-service `networks:` blocks needed. It must already exist:
+  #     docker network create migration-network
+  default:
+    name: migration-network
+    external: true
+
+services:
+  # -------------------------------------------------------------------------
+  # Metrics
+  # -------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: obs-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+      - "--web.enable-remote-write-receiver" # lets Tempo's metrics-generator push span-metrics/service-graphs
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres-exporter-legacy:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: obs-postgres-exporter-legacy
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${LEGACY_PG_USER:-postgres}:${LEGACY_PG_PASSWORD:-postgres}@legacy-postgres:5432/${LEGACY_PG_DB:-monolith}?sslmode=disable"
+    command:
+      - "--extend.query-path=/etc/postgres_exporter/legacy-queries.yaml"
+    volumes:
+      - ./postgres-exporter/legacy-queries.yaml:/etc/postgres_exporter/legacy-queries.yaml:ro
+    ports:
+      - "9187:9187"
+
+  postgres-exporter-user:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: obs-postgres-exporter-user
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${USER_PG_USER:-user_service}:${USER_PG_PASSWORD:-user_service}@user-postgres:5432/${USER_PG_DB:-user_service}?sslmode=disable"
+    ports:
+      - "9188:9187"
+
+  postgres-exporter-sales:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: obs-postgres-exporter-sales
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${SALES_PG_USER:-sales}:${SALES_PG_PASSWORD:-sales}@sales-postgres:5432/${SALES_PG_DB:-sales}?sslmode=disable"
+    ports:
+      - "9189:9187"
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: obs-kafka-exporter
+    command:
+      - "--kafka.server=kafka:9092"
+      - "--topic.filter=legacy\\..*"
+      - "--group.filter=user-service-cdc|sales-service-cdc"
+    ports:
+      - "9308:9308"
+
+  connect-status-exporter:
+    build: ./connect-status-exporter
+    container_name: obs-connect-status-exporter
+    environment:
+      CONNECT_URL: "http://connect:8083"
+      CONNECTOR_NAME: "legacy-cdc-connector"
+      POLL_INTERVAL_SECONDS: "5"
+      EXPORTER_PORT: "9877"
+    ports:
+      - "9877:9877"
+
+  # Optional, best-effort: Debezium/Connect JMX internals (records read/written,
+  # batch size, task latency). Requires `connect` in cdc-infrastructure to have
+  # JMXPORT/JMXHOST set (see that repo's docker-compose.yml). If this container
+  # cannot reach Connect's JMX port, every OTHER dashboard/metric in this stack
+  # keeps working - this is the one piece with a documented graceful fallback
+  # (connector RUNNING/FAILED still comes from connect-status-exporter above).
+  debezium-jmx-exporter:
+    # bitnami only publishes a rolling `latest` tag for this image (no pinned
+    # versions available) - acceptable for this lab's best-effort component.
+    # This image is the plain io.prometheus.jmx "standalone" jar - it takes
+    # <port> <config.yml> as CLI args (no JMX_* env vars); the config file
+    # itself carries `hostPort:` telling it which remote JMX to scrape.
+    image: bitnami/jmx-exporter:latest
+    container_name: obs-debezium-jmx-exporter
+    command: ["5556", "/etc/jmx-exporter/kafka-connect.yml"]
+    volumes:
+      - ./jmx-exporter/kafka-connect.yml:/etc/jmx-exporter/kafka-connect.yml:ro
+    ports:
+      - "5556:5556"
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Logs
+  # -------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: obs-loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: obs-promtail
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+
+  # -------------------------------------------------------------------------
+  # Traces
+  # -------------------------------------------------------------------------
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: obs-tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    container_name: obs-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector/otel-collector-config.yml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "13133:13133" # health_check extension, used by scripts/health-check.sh
+    depends_on:
+      - tempo
+      - prometheus
+
+  # -------------------------------------------------------------------------
+  # Visualization
+  # -------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: obs-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  tempo_data:

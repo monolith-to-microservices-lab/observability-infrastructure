@@ -1,0 +1,88 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+  external_labels:
+    lab: migration-lab
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [] # no Alertmanager in this lab yet - rules still evaluate
+                       # and show as firing/pending in Prometheus & Grafana.
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # --- Application services (must expose /metrics; see each repo's changes) --
+  - job_name: monolith-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["monolith-backend:8000"]
+        labels: { service: monolith-backend, environment: lab }
+
+  - job_name: user-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["user-service:8000"]
+        labels: { service: user-service, environment: lab }
+
+  - job_name: user-service-cdc
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["user-service-cdc:9200"]
+        labels: { service: user-service-cdc, environment: lab }
+
+  - job_name: sales-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["sales-service:8000"]
+        labels: { service: sales-service, environment: lab }
+
+  - job_name: sales-service-cdc
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["sales-service-cdc:9201"]
+        labels: { service: sales-service-cdc, environment: lab }
+
+  # --- Databases -------------------------------------------------------------
+  - job_name: postgres-legacy
+    static_configs:
+      - targets: ["postgres-exporter-legacy:9187"]
+        labels: { service: legacy-postgres, database: legacy, environment: lab }
+
+  - job_name: postgres-user
+    static_configs:
+      - targets: ["postgres-exporter-user:9187"]
+        labels: { service: user-postgres, database: user-service, environment: lab }
+
+  - job_name: postgres-sales
+    static_configs:
+      - targets: ["postgres-exporter-sales:9187"]
+        labels: { service: sales-postgres, database: sales-service, environment: lab }
+
+  # --- Kafka / Kafka Connect / Debezium ---------------------------------------
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+        labels: { service: kafka, environment: lab }
+
+  - job_name: kafka-connect-status
+    static_configs:
+      - targets: ["connect-status-exporter:9877"]
+        labels: { service: kafka-connect, environment: lab }
+
+  - job_name: debezium-jmx
+    static_configs:
+      - targets: ["debezium-jmx-exporter:5556"]
+        labels: { service: debezium, environment: lab }
+
+  # --- OTel Collector's own metrics (traces pipeline health) ------------------
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]
+        labels: { service: otel-collector, environment: lab }
