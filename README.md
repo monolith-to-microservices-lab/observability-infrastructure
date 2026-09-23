@@ -216,3 +216,14 @@ provisioned from files, not the volume) - but there is normally no reason to.
   `user-service-cdc` via parametrization/label regex rather than duplicated
   panels/rules - see dashboard 4 ("CDC Consumer") and the alert rules note
   above.
+
+## CI
+
+| Workflow | Job | What it proves |
+|---|---|---|
+| `ci.yml` | **Lint** | ShellCheck, Ruff (connect-status-exporter), Hadolint |
+| | **Validate Configs** | every config checked by its own binary at the compose version: `promtool check config/rules`, `loki -verify-config`, `promtail -check-syntax`, `otelcol validate`, Tempo boot (`/ready`), Grafana boot with the real provisioning (all dashboards + the 3 datasources must load) |
+| | **Build** | exporter image (non-root) + Trivy image scan, `docker compose config` |
+| `security.yml` | **Security** | Gitleaks, Bandit, pip-audit (exporter), Trivy config (SARIF). Also weekly. |
+
+The whole stack with real telemetry is exercised by the full E2E run in `migration-e2e-tests`.

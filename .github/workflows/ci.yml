@@ -1,0 +1,145 @@
+# CI - every PR to main and every push to main.
+#
+#   Lint              ShellCheck, Ruff (connect-status-exporter), Hadolint
+#   Validate Configs  each config checked by its OWN binary, same version as
+#                     docker-compose.yml (not a generic YAML linter):
+#                       promtool (config + alert rules), loki -verify-config,
+#                       promtail -check-syntax, otelcol validate, Tempo boot
+#                       (/ready), Grafana boot with the real provisioning
+#                       (datasources + all dashboards must load)
+#   Build             exporter image + container scan, docker compose config
+#
+# The full stack is not started on every PR; the observability E2E tests in
+# migration-e2e-tests (full suite) exercise it with real telemetry.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: ruff (connect-status-exporter)
+        working-directory: connect-status-exporter
+        run: |
+          pip install ruff==0.16.8
+          ruff check --output-format=github .
+          ruff format --check .
+      - name: shellcheck
+        run: |
+          git ls-files -z '*.sh' | xargs -0 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 \
+            -x --source-path=SCRIPTDIR --severity=warning
+      - name: hadolint
+        run: docker run --rm -i hadolint/hadolint:v2.15.1 hadolint --failure-threshold warning - < connect-status-exporter/Dockerfile
+
+  validate-configs:
+    name: Validate Configs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prometheus (promtool check config + rules)
+        run: |
+          docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro" --entrypoint promtool \
+            prom/prometheus:v2.54.1 check config /etc/prometheus/prometheus.yml
+          docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro" --entrypoint promtool \
+            prom/prometheus:v2.54.1 check rules /etc/prometheus/rules/migration-lab-alerts.yml
+
+      - name: Loki (-verify-config)
+        run: |
+          docker run --rm -v "$PWD/loki:/cfg:ro" grafana/loki:2.9.8 \
+            -config.file=/cfg/loki-config.yml -verify-config
+
+      - name: Promtail (-check-syntax)
+        run: |
+          docker run --rm -v "$PWD/promtail:/cfg:ro" grafana/promtail:2.9.8 \
+            -config.file=/cfg/promtail-config.yml -check-syntax
+
+      - name: OpenTelemetry Collector (otelcol validate)
+        run: |
+          docker run --rm -v "$PWD/otel-collector:/cfg:ro" otel/opentelemetry-collector-contrib:0.108.0 \
+            validate --config=/cfg/otel-collector-config.yml
+
+      - name: Tempo (boot with the config, wait for /ready)
+        # Tempo 2.5 has no offline "verify" flag; starting it is the real check.
+        run: |
+          docker run -d --name tempo -p 3200:3200 -v "$PWD/tempo:/cfg:ro" grafana/tempo:2.5.0 -config.file=/cfg/tempo.yml
+          for _ in $(seq 1 45); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:3200/ready)" = "200" ]; then echo "Tempo ready"; exit 0; fi
+            sleep 2
+          done
+          docker logs tempo
+          exit 1
+
+      - name: Grafana dashboards are valid JSON
+        run: |
+          for f in grafana/dashboards/*.json; do jq -e '.title and .panels' "$f" > /dev/null && echo "ok  $f"; done
+
+      - name: Grafana (boot with real provisioning; every dashboard + datasource must load)
+        run: |
+          # Throw-away admin password for this ephemeral container, never a literal.
+          GF_ADMIN_PASSWORD="$(openssl rand -hex 16)"
+          docker run -d --name grafana -p 3000:3000 -e GF_SECURITY_ADMIN_PASSWORD="$GF_ADMIN_PASSWORD" \
+            -v "$PWD/grafana/provisioning:/etc/grafana/provisioning:ro" \
+            -v "$PWD/grafana/dashboards:/var/lib/grafana/dashboards:ro" grafana/grafana:11.2.0
+          for _ in $(seq 1 45); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/api/health)" = "200" ] && break
+            sleep 2
+          done
+          sleep 5
+          expected=$(find grafana/dashboards -maxdepth 1 -name '*.json' | wc -l)
+          loaded=$(curl -s -u "admin:$GF_ADMIN_PASSWORD" 'localhost:3000/api/search?type=dash-db' | jq length)
+          datasources=$(curl -s -u "admin:$GF_ADMIN_PASSWORD" localhost:3000/api/datasources | jq -r '[.[].name] | sort | join(",")')
+          echo "dashboards: $loaded/$expected  datasources: $datasources"
+          test "$loaded" -eq "$expected"
+          test "$datasources" = "Loki,Prometheus,Tempo"
+
+      - name: Container logs
+        if: failure()
+        run: |
+          docker logs tempo > tempo.log 2>&1
+          docker logs grafana > grafana.log 2>&1
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: config-validation-logs
+          path: "*.log"
+          retention-days: 7
+          if-no-files-found: ignore
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: docker build (connect-status-exporter)
+        run: docker build -t connect-status-exporter:ci connect-status-exporter
+      - name: Image runs as non-root
+        run: test "$(docker image inspect -f '{{.Config.User}}' connect-status-exporter:ci)" = "1000"
+      - name: Container scan (Trivy, HIGH/CRITICAL with a fix available)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.74.0 \
+            image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 connect-status-exporter:ci
+      - name: docker compose config
+        run: docker compose config --quiet
