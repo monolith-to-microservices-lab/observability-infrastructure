@@ -2,6 +2,7 @@
 Prometheus gauges. Read-only against Connect's REST API - never restarts,
 reconfigures, or otherwise mutates the connector.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,9 +27,7 @@ connector_up = Gauge(
 connector_failed = Gauge(
     "kafka_connect_connector_failed", "1 if the connector state is FAILED", ["connector"]
 )
-task_up = Gauge(
-    "kafka_connect_task_up", "1 if the task state is RUNNING", ["connector", "task"]
-)
+task_up = Gauge("kafka_connect_task_up", "1 if the task state is RUNNING", ["connector", "task"])
 task_failed = Gauge(
     "kafka_connect_task_failed", "1 if the task state is FAILED", ["connector", "task"]
 )
@@ -55,7 +54,9 @@ def poll_once(client: httpx.Client) -> None:
         task_id = str(task.get("id"))
         state = task.get("state", "UNKNOWN")
         task_up.labels(connector=CONNECTOR_NAME, task=task_id).set(1 if state == "RUNNING" else 0)
-        task_failed.labels(connector=CONNECTOR_NAME, task=task_id).set(1 if state == "FAILED" else 0)
+        task_failed.labels(connector=CONNECTOR_NAME, task=task_id).set(
+            1 if state == "FAILED" else 0
+        )
 
     logger.info(
         "connect.status_polled",

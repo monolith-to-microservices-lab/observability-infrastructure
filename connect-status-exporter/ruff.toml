@@ -1,0 +1,12 @@
+
+# Ruff configuration for the exporter (requirements.txt project, no pyproject).
+line-length = 100
+target-version = "py312"
+
+[lint]
+# pycodestyle, pyflakes, isort, bugbear, pyupgrade
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[lint.flake8-bugbear]
+# FastAPI/Typer declare dependencies and parameters as default-argument calls.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body", "typer.Option", "typer.Argument"]
