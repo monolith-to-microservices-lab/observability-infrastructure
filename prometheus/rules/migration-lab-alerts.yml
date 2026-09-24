@@ -98,3 +98,41 @@ groups:
         annotations:
           summary: "p95 CDC end-to-end latency for {{ $labels.service }} is above 5s"
           description: "From Debezium source timestamp to destination DB commit, p95 latency is {{ $value }}s. (Covers both UserHighCDCEndToEndLatency and SalesHighCDCEndToEndLatency.)"
+
+  # --- API Gateway (api-gateway repo) -----------------------------------------
+  # "Kong is up" and "the backends are healthy" are separate alerts on purpose.
+  - name: api-gateway
+    rules:
+      - alert: ApiGatewayDown
+        expr: up{job="api-gateway"} == 0
+        for: 30s
+        labels: { severity: critical, pipeline_stage: gateway }
+        annotations:
+          summary: "API Gateway (Kong) is down"
+          description: "Prometheus cannot scrape api-gateway:8100/metrics for 30s. Every client request goes through Kong - the whole public API is unavailable."
+
+      - alert: ApiGatewayUpstreamUnhealthy
+        expr: max by (upstream) (kong_upstream_target_health{state=~"unhealthy|dns_error"}) == 1
+        for: 30s
+        labels: { severity: warning, pipeline_stage: gateway }
+        annotations:
+          summary: "Kong marks {{ $labels.upstream }} as unhealthy"
+          description: "Kong's active health check on {{ $labels.upstream }} fails. Requests routed there get 502/503 from the gateway. Run scripts/route-status.ps1 (api-gateway repo) to see whether any route points to it."
+
+      - alert: ApiGatewayHigh5xxRatio
+        expr: |
+          (sum by (route) (rate(kong_http_requests_total{code=~"5.."}[5m])) / sum by (route) (rate(kong_http_requests_total[5m]))) > 0.05
+          and sum by (route) (rate(kong_http_requests_total[5m])) > 0.05
+        for: 2m
+        labels: { severity: warning, pipeline_stage: gateway }
+        annotations:
+          summary: "More than 5% of {{ $labels.route }} requests fail with 5xx"
+          description: "5xx ratio on route {{ $labels.route }} is {{ $value | humanizePercentage }}. If the route was just switched, consider the rollback runbook (api-gateway/docs/route-rollback-runbook.md)."
+
+      - alert: ApiGatewayRouteStateUnknown
+        expr: gateway_admin_api_up == 0 or absent(gateway_admin_api_up)
+        for: 1m
+        labels: { severity: warning, pipeline_stage: gateway }
+        annotations:
+          summary: "Gateway route state is not observable"
+          description: "gateway-route-exporter cannot read Kong's Admin API, so dashboards cannot show where /users and /sales currently point."

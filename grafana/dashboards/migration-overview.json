@@ -1032,6 +1032,231 @@
         "colorMode": "value",
         "graphMode": "area"
       }
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "API GATEWAY",
+      "description": "Kong - the single entry point. Details: API Gateway | Overview.",
+      "gridPos": {
+        "x": 3,
+        "y": 9,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"api-gateway\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "NO DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "/users -> (reads)",
+      "description": "Where Kong route 'users-read' points RIGHT NOW (configured state from the Admin API via gateway-route-exporter - valid even with zero traffic).",
+      "gridPos": {
+        "x": 6,
+        "y": 9,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max(gateway_route_on_monolith{route=\"users-read\"})",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "MONOLITH",
+                  "color": "blue",
+                  "index": 0
+                },
+                "0": {
+                  "text": "USER-SERVICE",
+                  "color": "purple",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "UNKNOWN (exporter down?)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "/sales -> (reads)",
+      "description": "Where Kong route 'sales-read' points RIGHT NOW (configured state from the Admin API via gateway-route-exporter - valid even with zero traffic).",
+      "gridPos": {
+        "x": 9,
+        "y": 9,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max(gateway_route_on_monolith{route=\"sales-read\"})",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "MONOLITH",
+                  "color": "blue",
+                  "index": 0
+                },
+                "0": {
+                  "text": "SALES-SERVICE",
+                  "color": "purple",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "UNKNOWN (exporter down?)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "justifyMode": "center"
+      }
     }
   ],
   "templating": {
@@ -1053,5 +1278,13 @@
     "list": []
   },
   "editable": true,
-  "graphTooltip": 1
+  "graphTooltip": 1,
+  "links": [
+    {
+      "title": "API Gateway | Strangler Routing",
+      "type": "link",
+      "url": "/d/api-gateway-strangler",
+      "icon": "dashboard"
+    }
+  ]
 }

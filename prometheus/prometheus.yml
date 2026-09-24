@@ -49,6 +49,27 @@ scrape_configs:
       - targets: ["sales-service-cdc:9201"]
         labels: { service: sales-service-cdc, environment: lab }
 
+  # --- API Gateway (api-gateway repo) -----------------------------------------
+  # Kong's Prometheus plugin, served on the Status API (never the Admin API).
+  # Labels: service / route / code / source - bounded sets, no raw paths.
+  # NOTE: no static `service` target label here (unlike the other jobs): in
+  # Kong metrics `service` is the Kong Service = the UPSTREAM that received
+  # the request (monolith / user-service / sales-service). A static label
+  # would overwrite it (Prometheus renames the scraped one exported_service).
+  - job_name: api-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api-gateway:8100"]
+        labels: { component: api-gateway, environment: lab }
+
+  # Configured route -> upstream mapping (gateway_route_upstream_info): the
+  # "where does /users point right now" answer, even with zero traffic.
+  - job_name: gateway-route-exporter
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway-route-exporter:9542"]
+        labels: { service: gateway-route-exporter, environment: lab }
+
   # --- Databases -------------------------------------------------------------
   - job_name: postgres-legacy
     static_configs:

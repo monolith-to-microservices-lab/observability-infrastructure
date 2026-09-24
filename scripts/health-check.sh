@@ -48,6 +48,7 @@ echo "=================================================="
 echo
 
 check_http "Monolith API"            "http://localhost:8000/health"
+check_http "API Gateway (Kong)"       "http://localhost:8088/gateway/health"
 check_container_healthy "Legacy PostgreSQL" "monolito-microservice-postgres-1"
 check_http "Prometheus"              "http://localhost:9090/-/healthy"
 check_http "Grafana"                 "http://localhost:3000/api/health"

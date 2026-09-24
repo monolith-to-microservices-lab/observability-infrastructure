@@ -127,6 +127,27 @@ Lab-only, plaintext, **not for anything resembling production**:
    CREATE/UPDATE/DELETE flow through the users pipeline live. (Sales has the
    same story visible via dashboards 1/3/4 together - a second near-identical
    demo dashboard was not added to avoid duplication.)
+8. **API Gateway | Overview** - Kong (`api-gateway` repo): gateway and
+   Admin API UP/DOWN, where each route points right now, Kong's health check
+   of every backend, req/s by route → upstream, 2xx/4xx/5xx, p50/p95/p99,
+   upstream latency, gateway overhead, and the JSON access log from Loki.
+9. **API Gateway | Strangler Routing** - the didactic view
+   (CLIENT → KONG → `/users` / `/sales` → monolith or microservice): the
+   current destination of every route, the traffic share per destination,
+   and a "route on monolith?" timeline where every step is a switch or rollback.
+
+The *Overview* dashboard also has gateway tiles (API GATEWAY, `/users ->`,
+`/sales ->`).
+
+Gateway scrape jobs: `api-gateway` (`api-gateway:8100/metrics`, Kong's
+Prometheus plugin on the Status API) and `gateway-route-exporter`
+(`gateway-route-exporter:9542`, the configured route → upstream mapping).
+The `api-gateway` job deliberately has **no static `service` label**: in
+Kong's metrics `service` is the upstream that received the request. Kong
+access logs reach Loki through Promtail (`compose_project="api-gateway"`),
+with `route`, `upstream`, `status`, `request_id` and `trace_id` as JSON
+fields, never labels. Kong's `opentelemetry` plugin sends spans to the OTel
+Collector (`service.name=api-gateway`), so HTTP traces start at the gateway.
 
 ## Alert rules
 
@@ -137,7 +158,9 @@ wired up in this lab - rules fire and are visible, nothing pages anyone:
 `MonolithDown`, `LegacyPostgresDown`, `KafkaDown`, `KafkaConnectDown`,
 `DebeziumConnectorFailed`, `ReplicationSlotInactive`, `HighWalLag`,
 `CDCConsumerDown`, `DestinationDatabaseDown`, `HighConsumerLag`,
-`CDCProcessingErrors`, `HighCDCEndToEndLatency`.
+`CDCProcessingErrors`, `HighCDCEndToEndLatency`, and for the API Gateway
+`ApiGatewayDown`, `ApiGatewayUpstreamUnhealthy`, `ApiGatewayHigh5xxRatio`,
+`ApiGatewayRouteStateUnknown`.
 
 The last five are generalized (one rule, `job=~"user-service-cdc|sales-service-cdc"`
 or equivalent) rather than duplicated per consumer - each still fires as a

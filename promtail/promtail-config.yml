@@ -26,9 +26,13 @@ scrape_configs:
       # Only ship logs for containers that belong to this migration lab -
       # keeps Loki from filling up with unrelated local projects.
       - source_labels: [compose_project]
-        regex: "(monolito-microservice|user-service|sales-service|cdc-infrastructure|observability-infrastructure|migration-tool)"
+        regex: "(monolito-microservice|user-service|sales-service|cdc-infrastructure|observability-infrastructure|migration-tool|api-gateway)"
         action: keep
     pipeline_stages:
+      # Kong access lines (file-log plugin) are JSON too: route, upstream,
+      # method, path, status, request_id, trace_id, latencies.* are all
+      # queryable with `| json` - deliberately NOT promoted to labels
+      # (request_id / trace_id / path would explode Loki's index).
       # App containers already log JSON to stdout - parse it so fields like
       # level, request_id, topic, partition, operation become queryable
       # Loki labels/fields without ever turning entity_id/user_id into an
